@@ -2,6 +2,9 @@ from activation import Activation
 from layer import Layer
 import numpy as np
 
+def relu(x):
+    return np.maximum(0, x) # ReLU function
+
 class Sigmoid(Activation):
     def __init__(self):
         def sigmoid(x):
@@ -21,4 +24,4 @@ class Softmax(Layer):
     
     def backward(self, output_gradient, learning_rate):
         n = np.size(self.output)
-        
+        return np.dot((np.identity(n) - self.output.T) * self.output, output_gradient) # return dL/dX

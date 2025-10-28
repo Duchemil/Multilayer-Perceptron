@@ -1,7 +1,8 @@
 
 from layer import Layer
+import numpy as np
 
-class Dense(Layer):
+class Activation(Layer):
     def __init__(self, activation, activation_prime):
         self.activation = activation
         self.activation_prime = activation_prime
@@ -9,7 +10,6 @@ class Dense(Layer):
     def forward(self, input):
         self.input = input
         return self.activation(self.input)
-    
+
     def backward(self, output_gradient, learning_rate):
-        # TODO : update parameters and return input gradient
-        pass
+        return np.multiply(output_gradient, self.activation_prime(self.input)) # return dL/dX
