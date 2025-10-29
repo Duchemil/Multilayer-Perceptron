@@ -66,30 +66,51 @@ def binary_cross_entropy_scalar(y_true, p_pred, eps=1e-12):
     y = y_true
     return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
+# ...existing code...
 def predict_dataframe(df, model, scaler, feature_start_col=2, threshold=0.5):
     X = df.iloc[:, feature_start_col:].astype(float).values
     if scaler is not None:
         X = scaler.transform(X)
+
     logits_or_probs = forward_pass(model, X.T)  # shape (out, N) or (1, N)
     arr = np.array(logits_or_probs)
-    # normalize to 1D prob vector:
-    if arr.ndim == 2 and arr.shape[0] == 1:
-        arr1 = arr.ravel()
+
+    # Determine probability vector for the positive class (class index 1)
+    if arr.ndim == 2:
+        if arr.shape[0] == 1:
+            # single-row output (1, N)
+            arr1 = arr.ravel()
+            probs = arr1 if (np.nanmin(arr1) >= 0.0 and np.nanmax(arr1) <= 1.0) else sigmoid(arr1)
+        else:
+            # multi-class output (n_classes, N)
+            if np.nanmin(arr) >= 0.0 and np.nanmax(arr) <= 1.0:
+                probs_matrix = arr
+            else:
+                # apply stable softmax per column
+                exps = np.exp(arr - np.max(arr, axis=0, keepdims=True))
+                probs_matrix = exps / np.sum(exps, axis=0, keepdims=True)
+            # assume positive class is index 1 (adjust if your label mapping differs)
+            if probs_matrix.shape[0] > 1:
+                probs = probs_matrix[1, :]
+            else:
+                probs = probs_matrix.ravel()
     elif arr.ndim == 1:
-        arr1 = arr
+        probs = arr if (np.nanmin(arr) >= 0.0 and np.nanmax(arr) <= 1.0) else sigmoid(arr)
     else:
-        # multi-output model: pick first output if binary expected
-        arr1 = arr.ravel()
-    # detect if already probabilities (in [0,1]) else apply sigmoid
-    if np.nanmin(arr1) >= 0.0 and np.nanmax(arr1) <= 1.0:
-        probs = arr1
-    else:
-        probs = sigmoid(arr1)
+        probs = arr.ravel()
+
+    probs = np.asarray(probs).ravel()
+
+    # sanity check: probs length must match number of rows
+    if probs.shape[0] != X.shape[0]:
+        raise ValueError(f"prob length ({probs.shape[0]}) != rows ({X.shape[0]})")
+
     preds = (probs >= threshold).astype(int)
     out_df = df.copy().reset_index(drop=True)
     out_df["prob"] = probs
     out_df["pred"] = preds
     return out_df
+# ...existing code...
 
 def main():
     p = argparse.ArgumentParser(description="Run MLP predictions on CSV rows and evaluate with BCE.")

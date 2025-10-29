@@ -62,14 +62,14 @@ def main():
 
     n_samples, n_features = X_train.shape
 
-    # Build basic 2 hidden layer MLP
+    # Build basic 2-class MLP with softmax output
     model = [
         Dense(n_features, args.hidden),
         ReLU(),
         Dense(args.hidden, args.hidden),
         ReLU(),
-        Dense(args.hidden, 1),
-        Sigmoid()
+        Dense(args.hidden, 2),
+        Softmax()
     ]
 
     rng = np.random.RandomState(args.seed)
@@ -95,17 +95,23 @@ def main():
             xb_col = xb.T  # (n_features, batch)
             yb_row = yb.T  # (1, batch)
 
-            # logits = forward_pass(model, xb_col)  # (1, batch)
-            # y_pred = sigmoid(logits)
-            # forward_pass already runs the last Sigmoid layer, so this returns probabilities
-            y_pred = forward_pass(model, xb_col)  # (1, batch)
+            # forward pass returns class probabilities from Softmax: shape (2, batch)
+            y_pred = forward_pass(model, xb_col)  # (2, batch)
 
-            loss = binary_cross_entropy(y_pred, yb_row)
-            epoch_loss += loss * xb.shape[0]
+            # convert labels to one-hot (2, batch)
+            yb_idx = yb_row.flatten().astype(int)
+            yb_onehot = np.eye(2)[yb_idx].T  # (2, batch)
 
-            # gradient of loss wrt logits (dL/dz) for BCE with sigmoid = (y_pred - y)
-            grad_logits = (y_pred - yb_row)  # (1, batch)
-            # backpropagate through model (last layer is Dense -> will accept grad_logits)
+            # categorical cross-entropy (mean over batch)
+            eps = 1e-8
+            y_pred_clipped = np.clip(y_pred, eps, 1 - eps)
+            batch_loss = -np.sum(yb_onehot * np.log(y_pred_clipped)) / xb.shape[0]
+            epoch_loss += batch_loss * xb.shape[0]
+
+            # gradient for softmax + categorical CE: (y_pred - y_true)
+            grad_logits = (y_pred - yb_onehot)  # (2, batch)
+
+            # backpropagate through model
             g = grad_logits
             for layer in reversed(model):
                 g = layer.backward(g, args.lr)
@@ -113,10 +119,16 @@ def main():
         epoch_loss /= n_samples
 
         # validation
-        val_pred = forward_pass(model, X_val.T)  # probabilities
-        val_loss = binary_cross_entropy(val_pred, y_val.T)
-        val_labels = (val_pred >= 0.5).astype(int).T
-        val_acc = (val_labels == y_val).mean()
+        val_pred = forward_pass(model, X_val.T)  # (2, n_val) probabilities
+        # convert val labels to one-hot for loss
+        yval_idx = y_val.flatten().astype(int)
+        yval_onehot = np.eye(2)[yval_idx].T
+        val_pred_clipped = np.clip(val_pred, 1e-8, 1 - 1e-8)
+        val_loss = -np.sum(yval_onehot * np.log(val_pred_clipped)) / y_val.shape[0]
+
+        # predicted class and accuracy
+        val_labels = np.argmax(val_pred, axis=0)  # (n_val,)
+        val_acc = (val_labels == y_val.flatten().astype(int)).mean()
 
         print(f"Epoch {epoch:3d} train_loss={epoch_loss:.4f} val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
 
