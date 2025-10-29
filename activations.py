@@ -1,9 +1,27 @@
-from activation import Activation
 from layer import Layer
 import numpy as np
 
-def relu(x):
-    return np.maximum(0, x) # ReLU function
+class Activation(Layer):
+    def __init__(self, activation, activation_prime):
+        self.activation = activation
+        self.activation_prime = activation_prime
+
+    def forward(self, input):
+        self.input = input
+        return self.activation(self.input)
+
+    def backward(self, output_gradient, learning_rate):
+        return np.multiply(output_gradient, self.activation_prime(self.input)) # return dL/dX
+    
+class ReLU(Activation):
+    def __init__(self):
+        def relu(x):
+            return np.maximum(0, x) # ReLU function
+        
+        def relu_prime(x):
+            return (x > 0).astype(float) # Derivative of ReLU
+        
+        super().__init__(relu, relu_prime)
 
 class Sigmoid(Activation):
     def __init__(self):
@@ -16,12 +34,15 @@ class Sigmoid(Activation):
         
         super().__init__(sigmoid, sigmoid_prime)
 
-class Softmax(Layer): 
+class Softmax(Layer):
     def forward(self, input):
-        tmp = np.exp(input)
-        self.output = tmp / np.sum(tmp) 
+        # input shape: (n_classes, batch)
+        exps = np.exp(input - np.max(input, axis=0, keepdims=True))
+        self.output = exps / np.sum(exps, axis=0, keepdims=True)
         return self.output
-    
+
     def backward(self, output_gradient, learning_rate):
-        n = np.size(self.output)
-        return np.dot((np.identity(n) - self.output.T) * self.output, output_gradient) # return dL/dX
+        # output_gradient shape: (n_classes, batch)
+        s = self.output
+        # vectorized Jacobian-vector product per sample
+        return s * (output_gradient - np.sum(output_gradient * s, axis=0, keepdims=True))

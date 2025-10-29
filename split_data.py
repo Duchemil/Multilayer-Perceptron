@@ -20,7 +20,7 @@ def detect_label_series(df):
 def main():
     p = argparse.ArgumentParser(description="Split CSV into train/evaluation parts.")
     p.add_argument("csv", help="Path to CSV file to split")
-    p.add_argument("-p", "--percent", type=float, default=10.0,
+    p.add_argument("-p", "--percent", type=float, default=20.0,
                    help="Evaluation percentage (0-100). Example: -p 20 => 20%% evaluation, 80%% train")
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducible split")
     args = p.parse_args()
