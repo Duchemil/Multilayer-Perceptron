@@ -1,5 +1,4 @@
 __pycache__/*
 *.npz
-*.npz
 *.csv
-*.csv
+*.pkl

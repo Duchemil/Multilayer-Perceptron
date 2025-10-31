@@ -66,7 +66,6 @@ def binary_cross_entropy_scalar(y_true, p_pred, eps=1e-12):
     y = y_true
     return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
-# ...existing code...
 def predict_dataframe(df, model, scaler, feature_start_col=2, threshold=0.5):
     X = df.iloc[:, feature_start_col:].astype(float).values
     if scaler is not None:
@@ -89,7 +88,6 @@ def predict_dataframe(df, model, scaler, feature_start_col=2, threshold=0.5):
                 # apply stable softmax per column
                 exps = np.exp(arr - np.max(arr, axis=0, keepdims=True))
                 probs_matrix = exps / np.sum(exps, axis=0, keepdims=True)
-            # assume positive class is index 1 (adjust if your label mapping differs)
             if probs_matrix.shape[0] > 1:
                 probs = probs_matrix[1, :]
             else:
@@ -110,7 +108,6 @@ def predict_dataframe(df, model, scaler, feature_start_col=2, threshold=0.5):
     out_df["prob"] = probs
     out_df["pred"] = preds
     return out_df
-# ...existing code...
 
 def main():
     p = argparse.ArgumentParser(description="Run MLP predictions on CSV rows and evaluate with BCE.")

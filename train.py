@@ -16,12 +16,6 @@ from activations import Sigmoid, ReLU, Softmax
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
-def binary_cross_entropy(y_pred, y_true, eps=1e-8):
-    # y_pred, y_true shape: (1, batch)
-    y_pred_clipped = np.clip(y_pred, eps, 1 - eps)
-    loss = - (y_true * np.log(y_pred_clipped) + (1 - y_true) * np.log(1 - y_pred_clipped))
-    return np.mean(loss)
-
 def load_and_prepare(path, seed=42, val_pct=0.2):
     df = pd.read_csv(path, header=None)
     X = df.iloc[:, 2:].astype(float).values  # features (n_samples, n_features)
@@ -48,6 +42,7 @@ def main():
     p.add_argument("--lr", type=float, default=0.01, help="Learning rate")
     p.add_argument("--hidden", type=int, default=64, help="Number of hidden units")
     p.add_argument("--batch", type=int, default=64, help="Batch size")
+    p.add_argument("--momentum", type=float, default=0.0, help="Momentum factor for SGD")
     p.add_argument("--val-pct", type=float, default=20.0, help="Validation percentage")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument("--plot-out", help="Path to save loss/accuracy plot (PNG). If not provided the plot will be shown interactively.")
@@ -114,8 +109,31 @@ def main():
             # backpropagate through model
             g = grad_logits
             for layer in reversed(model):
-                g = layer.backward(g, args.lr)
+                g = layer.backward(g, args.lr, momentum=args.momentum)
 
+        # Early stopping with a 5-epoch patience on validation loss.
+        try:
+            best_val_loss
+        except NameError:
+            best_val_loss = float("inf")
+            epochs_no_improve = 0
+
+        # val_loss refers to the most recently computed validation loss (from previous epoch)
+        try:
+            prev_val_loss = val_loss
+        except NameError:
+            prev_val_loss = None
+
+        if prev_val_loss is not None:
+            # consider a tiny epsilon to avoid floating point noise
+            if prev_val_loss + 1e-8 < best_val_loss:
+                best_val_loss = prev_val_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+            if epochs_no_improve >= 5:
+                print(f"Early stopping at epoch {epoch} after {epochs_no_improve} epochs with no improvement in validation loss.")
+                break
         epoch_loss /= n_samples
 
         # validation

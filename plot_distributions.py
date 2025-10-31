@@ -22,7 +22,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
 def assign_column_names(df: pd.DataFrame) -> List[str]:
     n = df.shape[1]
     if n >= 2:
@@ -32,12 +31,10 @@ def assign_column_names(df: pd.DataFrame) -> List[str]:
         names = [f"col_{i+1}" for i in range(n)]
     return names
 
-
 def is_numeric_series(s: pd.Series) -> bool:
     # consider numeric if at least one value converts to numeric (not all NaN)
     converted = pd.to_numeric(s, errors="coerce")
     return converted.notna().any()
-
 
 def plot_distributions(path: str, skip_id: bool = True, ncols: int = 3):
     df = pd.read_csv(path, header=None)
@@ -100,7 +97,6 @@ def plot_distributions(path: str, skip_id: bool = True, ncols: int = 3):
     plt.tight_layout()
     plt.show()
 
-
 def main():
     parser = argparse.ArgumentParser(description="Plot distributions for each column in a CSV file.")
     parser.add_argument("csv", nargs="?", default="data.csv", help="Path to the CSV file (default: data.csv)")
@@ -117,7 +113,6 @@ def main():
         raise SystemExit(f"CSV file not found: {path}")
 
     plot_distributions(path, skip_id=args.skip_id, ncols=args.cols)
-
 
 if __name__ == "__main__":
     main()
