@@ -32,7 +32,7 @@ class Dense(Layer):
             self.weights += -momentum * vw_prev + (1.0 + momentum) * self.vw
             self.bias += -momentum * vb_prev + (1.0 + momentum) * self.vb
         else:
-            # update parameters
+            # Update parameters, no momentum, wikipedia for reference
             self.weights -= learning_rate * dw
             self.bias -= learning_rate * db
 

@@ -10,4 +10,6 @@ You pass the input through the input layer, then to a hidden layer which compute
 
 Backward propagation is the process of adjusting the weights and bias depending on the expected output and the received output.
 
-However as the first layers have an indirect impact on 
+However as the weight of the first layers have an indirect impact on the output and we can only change the weights and bias it gets trickier.
+
+We basically decompose the task of computing the derivatives per layer, and pass them sequentially from the output layer to the input layer.

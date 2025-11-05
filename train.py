@@ -35,17 +35,136 @@ def forward_pass(model, x):
         out = layer.forward(out)
     return out
 
+def train_one_model(name, hidden, momentum, args, X_train, X_val, y_train, y_val, scaler):
+    """Train a single model configuration and return history + params."""
+    n_samples, n_features = X_train.shape
+    model = [
+        Dense(n_features, hidden),
+        ReLU(),
+        Dense(hidden, hidden),
+        ReLU(),
+        Dense(hidden, 2),
+        Softmax()
+    ]
+
+    rng = np.random.RandomState(args.seed)
+    train_losses, val_losses, val_accs, train_accs = [], [], [], []
+
+    # Early stopping state
+    best_val_loss = float("inf")
+    epochs_no_improve = 0
+    best_params = None
+
+    for epoch in range(1, args.epochs + 1):
+        perm = rng.permutation(n_samples)
+        X_sh = X_train[perm]
+        y_sh = y_train[perm]
+
+        epoch_loss = 0.0
+        for i in range(0, n_samples, args.batch):
+            xb = X_sh[i:i + args.batch]
+            yb = y_sh[i:i + args.batch]
+            if xb.shape[0] == 0:
+                continue
+            xb_col = xb.T
+            yb_row = yb.T
+            y_pred = forward_pass(model, xb_col)  # (2, batch)
+            yb_idx = yb_row.flatten().astype(int)
+            yb_onehot = np.eye(2)[yb_idx].T
+            eps = 1e-8
+            y_pred_clipped = np.clip(y_pred, eps, 1 - eps)
+            batch_loss = -np.sum(yb_onehot * np.log(y_pred_clipped)) / xb.shape[0]
+            epoch_loss += batch_loss * xb.shape[0]
+            grad_logits = (y_pred - yb_onehot)
+            g = grad_logits
+            for layer in reversed(model):
+                # pass per-model momentum to layers
+                g = layer.backward(g, 0.01, momentum=momentum)
+
+        epoch_loss /= n_samples
+
+        # validation
+        val_pred = forward_pass(model, X_val.T)
+        yval_idx = y_val.flatten().astype(int)
+        yval_onehot = np.eye(2)[yval_idx].T
+        val_pred_clipped = np.clip(val_pred, 1e-8, 1 - 1e-8)
+        val_loss = -np.sum(yval_onehot * np.log(val_pred_clipped)) / y_val.shape[0]
+        val_labels = np.argmax(val_pred, axis=0)
+        val_acc = (val_labels == y_val.flatten().astype(int)).mean()
+
+        train_losses.append(epoch_loss)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
+        # compute training accuracy on full training set for plotting
+        train_pred = forward_pass(model, X_train.T)
+        train_labels_pred = np.argmax(train_pred, axis=0)
+        train_acc = (train_labels_pred == y_train.flatten().astype(int)).mean()
+        train_accs.append(train_acc)
+
+        # Early stopping check using current val_loss
+        if val_loss + 1e-8 < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            # save best model parameters (deep copy)
+            best_params = {}
+            idx = 0
+            for layer in model:
+                if hasattr(layer, "weights"):
+                    best_params[f"W{idx}"] = layer.weights.copy()
+                    best_params[f"b{idx}"] = layer.bias.copy()
+                    idx += 1
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= 5:
+                print(f"Early stopping at epoch {epoch} after {epochs_no_improve} epochs with no improvement in validation loss.")
+                break
+
+        print(f"[{name}] Epoch {epoch:3d} train_loss={epoch_loss:.4f} val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
+
+    # save model params
+    params = {}
+    idx = 0
+    for layer in model:
+        if hasattr(layer, "weights"):
+            params[f"W{idx}"] = layer.weights
+            params[f"b{idx}"] = layer.bias
+            idx += 1
+    model_file = f"mlp_model_{name}.npz"
+    np.savez(model_file, **params)
+    print(f"[{name}] Model saved to {model_file}")
+
+    # save history
+    history = {
+        "train_loss": np.array(train_losses),
+        "val_loss": np.array(val_losses),
+        "val_acc": np.array(val_accs),
+        "train_acc": np.array(train_accs),
+    }
+    hist_file = f"history_{name}.npz"
+    np.savez(hist_file, **history)
+    print(f"[{name}] History saved to {hist_file}")
+
+    return {
+        "name": name,
+        "train_losses": train_losses,
+        "val_losses": val_losses,
+        "val_accs": val_accs,
+        "train_accs": train_accs,
+        "model_file": model_file,
+        "hist_file": hist_file,
+    }
+
 def main():
-    p = argparse.ArgumentParser(description="Train a simple MLP on CSV data.")
+    p = argparse.ArgumentParser(description="Train one or multiple MLP configs on CSV data.")
     p.add_argument("csv", help="Path to CSV file for training data")
-    p.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
-    p.add_argument("--lr", type=float, default=0.01, help="Learning rate")
-    p.add_argument("--hidden", type=int, default=64, help="Number of hidden units")
-    p.add_argument("--batch", type=int, default=64, help="Batch size")
-    p.add_argument("--momentum", type=float, default=0.0, help="Momentum factor for SGD")
-    p.add_argument("--val-pct", type=float, default=20.0, help="Validation percentage")
-    p.add_argument("--seed", type=int, default=42, help="Random seed")
-    p.add_argument("--plot-out", help="Path to save loss/accuracy plot (PNG). If not provided the plot will be shown interactively.")
+    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--hidden", type=int, nargs="+", default=[64], help="One or more hidden sizes (one value per model)")
+    p.add_argument("--batch", type=int, default=64)
+    p.add_argument("--momentum", type=float, nargs="+", default=[0.0], help="Momentum values (one per model or single value)")
+    p.add_argument("--val-pct", type=float, default=20.0)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--names", type=str, nargs="+", help="Optional names for models (one per model)")
+    p.add_argument("--plot-out", help="Path to save comparison plot (PNG).")
     args = p.parse_args()
 
     csv_path = Path(args.csv)
@@ -54,149 +173,89 @@ def main():
         sys.exit(2)
 
     X_train, X_val, y_train, y_val, scaler = load_and_prepare(csv_path, seed=args.seed, val_pct=args.val_pct/100.0)
-
-    n_samples, n_features = X_train.shape
-
-    # Build basic 2-class MLP with softmax output
-    model = [
-        Dense(n_features, args.hidden),
-        ReLU(),
-        Dense(args.hidden, args.hidden),
-        ReLU(),
-        Dense(args.hidden, 2),
-        Softmax()
-    ]
-
-    rng = np.random.RandomState(args.seed)
-    # storage for plotting
-    train_losses = []
-    val_losses = []
-    val_accs = []
-
-    for epoch in range(1, args.epochs + 1):
-        # shuffle
-        perm = rng.permutation(n_samples)
-        X_sh = X_train[perm]
-        y_sh = y_train[perm]
-
-        epoch_loss = 0.0
-        # mini-batch training
-        for i in range(0, n_samples, args.batch):
-            xb = X_sh[i:i + args.batch]
-            yb = y_sh[i:i + args.batch]
-            if xb.shape[0] == 0:
-                continue
-            # convert to column-batch layout expected by layers: (features, batch)
-            xb_col = xb.T  # (n_features, batch)
-            yb_row = yb.T  # (1, batch)
-
-            # forward pass returns class probabilities from Softmax: shape (2, batch)
-            y_pred = forward_pass(model, xb_col)  # (2, batch)
-
-            # convert labels to one-hot (2, batch)
-            yb_idx = yb_row.flatten().astype(int)
-            yb_onehot = np.eye(2)[yb_idx].T  # (2, batch)
-
-            # categorical cross-entropy (mean over batch)
-            eps = 1e-8
-            y_pred_clipped = np.clip(y_pred, eps, 1 - eps)
-            batch_loss = -np.sum(yb_onehot * np.log(y_pred_clipped)) / xb.shape[0]
-            epoch_loss += batch_loss * xb.shape[0]
-
-            # gradient for softmax + categorical CE: (y_pred - y_true)
-            grad_logits = (y_pred - yb_onehot)  # (2, batch)
-
-            # backpropagate through model
-            g = grad_logits
-            for layer in reversed(model):
-                g = layer.backward(g, args.lr, momentum=args.momentum)
-
-        # Early stopping with a 5-epoch patience on validation loss.
-        try:
-            best_val_loss
-        except NameError:
-            best_val_loss = float("inf")
-            epochs_no_improve = 0
-
-        # val_loss refers to the most recently computed validation loss (from previous epoch)
-        try:
-            prev_val_loss = val_loss
-        except NameError:
-            prev_val_loss = None
-
-        if prev_val_loss is not None:
-            # consider a tiny epsilon to avoid floating point noise
-            if prev_val_loss + 1e-8 < best_val_loss:
-                best_val_loss = prev_val_loss
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-            if epochs_no_improve >= 5:
-                print(f"Early stopping at epoch {epoch} after {epochs_no_improve} epochs with no improvement in validation loss.")
-                break
-        epoch_loss /= n_samples
-
-        # validation
-        val_pred = forward_pass(model, X_val.T)  # (2, n_val) probabilities
-        # convert val labels to one-hot for loss
-        yval_idx = y_val.flatten().astype(int)
-        yval_onehot = np.eye(2)[yval_idx].T
-        val_pred_clipped = np.clip(val_pred, 1e-8, 1 - 1e-8)
-        val_loss = -np.sum(yval_onehot * np.log(val_pred_clipped)) / y_val.shape[0]
-
-        # predicted class and accuracy
-        val_labels = np.argmax(val_pred, axis=0)  # (n_val,)
-        val_acc = (val_labels == y_val.flatten().astype(int)).mean()
-
-        print(f"Epoch {epoch:3d} train_loss={epoch_loss:.4f} val_loss={val_loss:.4f} val_acc={val_acc:.4f}")
-
-        # record metrics for plotting
-        train_losses.append(epoch_loss)
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-
-    # after training and before exit
-    # save scaler and simple metadata
+    # save scaler once (shared preprocessing)
     joblib.dump(scaler, "scaler.pkl")
-    meta = {"feature_start_col": 2, "label_map": {"M": 1, "B": 0}, "threshold": 0.5}
-    np.savez("mlp_meta.npz", **meta)
-    print("Scaler saved to scaler.pkl and metadata to mlp_meta.npz")
+    print("Scaler saved to scaler.pkl")
 
-    # optional: save weights (simple np.savez)
-    params = {}
-    idx = 0
-    for layer in model:
-        if hasattr(layer, "weights"):
-            params[f"W{idx}"] = layer.weights
-            params[f"b{idx}"] = layer.bias
-            idx += 1
-    np.savez("mlp_model.npz", **params)
-    print("Model saved to mlp_model.npz")
+    hidden_list = args.hidden
+    momentum_list = args.momentum if len(args.momentum) > 1 or len(args.hidden) == 1 else args.momentum * len(hidden_list)
+    # broadcast single momentum if needed
+    if len(momentum_list) == 1 and len(hidden_list) > 1:
+        momentum_list = momentum_list * len(hidden_list)
+    if len(momentum_list) != len(hidden_list):
+        # zip will truncate; enforce same length
+        raise ValueError("Number of momentum values must be 1 or match number of hidden sizes")
 
-    # Plot training curves (loss & accuracy)
-    epochs = list(range(1, len(train_losses) + 1))
-    plt.figure(figsize=(10, 4))
+    if args.names:
+        if len(args.names) != len(hidden_list):
+            raise ValueError("If --names provided it must have same count as --hidden")
+        names = args.names
+    else:
+        names = [f"model{i}" for i in range(len(hidden_list))]
 
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs, train_losses, label="train_loss")
-    plt.plot(epochs, val_losses, label="val_loss")
+    all_histories = []
+    for name, hsize, mom in zip(names, hidden_list, momentum_list):
+        print(f"Training {name}: hidden={hsize}, momentum={mom}")
+        hist = train_one_model(name, hsize, mom, args, X_train, X_val, y_train, y_val, scaler)
+        all_histories.append(hist)
+
+    # plot comparison curves (use per-model epoch ranges to handle early stopping)
+    plt.figure(figsize=(14, 10))
+
+    # Training loss (top-left)
+    plt.subplot(2, 2, 1)
+    for h in all_histories:
+        ne = len(h["train_losses"])
+        ep = range(1, ne + 1)
+        plt.plot(ep, h["train_losses"], label=f"{h['name']}_train")
+    plt.title("Training Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.legend()
+    plt.legend(loc="best", fontsize="small")
     plt.grid(True)
 
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs, val_accs, label="val_acc")
+    # Validation loss (bottom-left)
+    plt.subplot(2, 2, 3)
+    for h in all_histories:
+        ne = len(h["val_losses"])
+        ep = range(1, ne + 1)
+        plt.plot(ep, h["val_losses"], "--", label=f"{h['name']}_val")
+    plt.title("Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend(loc="best", fontsize="small")
+    plt.grid(True)
+
+    # Train acc (top-right)
+    plt.subplot(2, 2, 2)
+    for h in all_histories:
+        ne = len(h["train_accs"])
+        ep = range(1, ne + 1)
+        plt.plot(ep, h["train_accs"], "-", label=f"{h['name']}_train")
+    plt.title("Train accuracy")
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
-    plt.ylim(0.6, 1)
+    plt.ylim(0.6, 1.0)
+    plt.legend(loc="best", fontsize="small")
     plt.grid(True)
-    plt.legend()
+
+    # Val acc (bottom-right)
+    plt.subplot(2, 2, 4)
+    for h in all_histories:
+        ne_val = len(h["val_accs"])
+        ep_val = range(1, ne_val + 1)
+        plt.plot(ep_val, h["val_accs"], "--", label=f"{h['name']}_val")
+    plt.title("Validation accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.ylim(0.6, 1.0)
+    plt.legend(loc="best", fontsize="small")
+    plt.grid(True)
 
     plt.tight_layout()
     if args.plot_out:
         plt.savefig(args.plot_out, dpi=150)
-        print(f"Training plot saved to {args.plot_out}")
+        print(f"Comparison plot saved to {args.plot_out}")
     else:
         plt.show()
 
